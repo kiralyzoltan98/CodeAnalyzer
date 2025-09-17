@@ -9,7 +9,7 @@ export function activate(context: vscode.ExtensionContext) {
     // This line of code will only be executed once when your extension is activated
     console.log('Congratulations, your extension "codeanalyzer" is now active!')
 
-    const outputChannel = vscode.window.createOutputChannel("C Code Analyzer")
+    const outputChannel = vscode.window.createOutputChannel("C++ Code Analyzer")
 
     // The command has been defined in the package.json file
     // Now provide the implementation of the command with registerCommand
@@ -22,8 +22,8 @@ export function activate(context: vscode.ExtensionContext) {
             return
         }
 
-        if (editor.document.languageId !== "c") {
-            vscode.window.showInformationMessage("This command is only available for C files.")
+        if (editor.document.languageId !== "cpp") {
+            vscode.window.showInformationMessage("This command is only available for C++ files.")
             return
         }
 
@@ -31,11 +31,38 @@ export function activate(context: vscode.ExtensionContext) {
         const functionDefinitions = new Map<string, string[]>()
         const functionCalls: string[] = []
 
-        // Regex for simple C function definitions with parameters
-        const funcDefRegex = /\b\w+\s+(\w+)\s*\(([^)]*)\)\s*\{/g
+        // Expanded list of C++ keywords and common constructs that look like functions
+        const cppKeywords = new Set([
+            "if",
+            "for",
+            "while",
+            "switch",
+            "catch",
+            "sizeof",
+            "class",
+            "struct",
+            "new",
+            "delete",
+            "template",
+            "typename",
+            "using",
+            "namespace",
+            "return",
+        ])
+
+        // Regex for simple C++ function/method definitions with parameters
+        // This regex is improved to not match control structures like if, for, while, etc.
+        const funcDefRegex =
+            /^(?!\s*(?:if|for|while|switch|catch)\b)\s*(?:[\w:]+\s+)?([\w:]+)\s*\(([^)]*)\)\s*(?:const)?\s*\{/gm
         let match
         while ((match = funcDefRegex.exec(text)) !== null) {
             const functionName = match[1]
+
+            // Additional check to filter out keywords
+            if (cppKeywords.has(functionName)) {
+                continue
+            }
+
             const params = match[2]
             const paramTypes = params
                 .split(",")
@@ -58,12 +85,11 @@ export function activate(context: vscode.ExtensionContext) {
             functionDefinitions.set(functionName, paramTypes)
         }
 
-        // Regex for simple C function calls with arguments
-        const funcCallRegex = /\b(\w+)\s*\(([^)]*)\);/g
-        const cKeywords = new Set(["if", "for", "while", "switch", "sizeof"])
+        // Regex for simple C++ function calls with arguments
+        const funcCallRegex = /\b([\w:]+)\s*\(([^)]*)\);/g
         while ((match = funcCallRegex.exec(text)) !== null) {
             const functionName = match[1]
-            if (!cKeywords.has(functionName) && functionDefinitions.has(functionName)) {
+            if (!cppKeywords.has(functionName) && functionDefinitions.has(functionName)) {
                 const args = match[2]
                     .split(",")
                     .map(a => a.trim())
@@ -73,7 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         outputChannel.clear()
-        outputChannel.appendLine("--- C Code Analysis ---")
+        outputChannel.appendLine("--- C++ Code Analysis ---")
         outputChannel.appendLine("")
 
         outputChannel.appendLine("Function Definitions:")
