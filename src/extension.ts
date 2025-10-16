@@ -1,167 +1,123 @@
 // The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode"
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    DocumentSymbol,
+    SymbolKind,
+} from "vscode-languageclient/node"
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+let client: LanguageClient
+let outputChannel: vscode.OutputChannel
+
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Congratulations, your extension "codeanalyzer" is now active!')
+    // Create output channel
+    outputChannel = vscode.window.createOutputChannel("Code Analyzer")
 
-    const outputChannel = vscode.window.createOutputChannel("C++ Code Analyzer")
+    const command = vscode.workspace.getConfiguration("codeanalyzer.clangd").get<string>("path") || "clangd"
 
-    // Create decoration types (remove hoverMessage from here)
-    const functionDefinitionDecoration = vscode.window.createTextEditorDecorationType({
-        textDecoration: "underline wavy green",
-    })
+    const serverOptions: ServerOptions = {
+        command,
+        args: [
+            // Basic settings
+            "--header-insertion=never",
+            "--clang-tidy=0",
+            "--completion-style=detailed",
+            "--function-arg-placeholders=0",
+            "--all-scopes-completion",
+            "--background-index",
+            "--log=verbose",
+            "--query-driver=**/*",
+            "--enable-config",
 
-    const functionCallDecoration = vscode.window.createTextEditorDecorationType({
-        textDecoration: "underline green",
-    })
+            // Instead of using --folding-ranges, we'll use the compile commands file
+            // The compile_commands.json file will handle the compiler flags
+        ],
+    }
 
-    // Update the type declarations
-    const definitionRanges: vscode.DecorationOptions[] = []
-    const callRanges: vscode.DecorationOptions[] = []
+    // Configure client options to disable default features
+    const clientOptions: LanguageClientOptions = {
+        documentSelector: [{ scheme: "file", language: "cpp" }],
+        synchronize: {
+            configurationSection: "codeanalyzer",
+        },
+        middleware: {
+            // Disable hover
+            provideHover: () => undefined,
+            // Disable code completion
+            provideCompletionItem: () => undefined,
+            // Disable signature help
+            provideSignatureHelp: () => undefined,
+        },
+    }
 
-    // The command has been defined in the package.json file
-    // Now provide the implementation of the command with registerCommand
-    // The commandId parameter must match the command field in package.json
-    const disposable = vscode.commands.registerCommand("codeanalyzer.helloWorld", () => {
+    client = new LanguageClient("codeanalyzer", "Code Analyzer", serverOptions, clientOptions)
+
+    // Register command to analyze functions
+    let disposable = vscode.commands.registerCommand("codeanalyzer.analyzeFunctions", async () => {
         const editor = vscode.window.activeTextEditor
-        if (!editor) {
-            vscode.window.showInformationMessage("No active editor found.")
+        if (!editor || editor.document.languageId !== "cpp") {
+            vscode.window.showInformationMessage("Please open a C++ file first")
             return
         }
 
-        if (editor.document.languageId !== "cpp") {
-            vscode.window.showInformationMessage("This command is only available for C++ files.")
-            return
-        }
-
-        const text = editor.document.getText()
-        const functionDefinitions = new Map<string, string[]>()
-        const functionCalls: string[] = []
-        const definitionRanges: vscode.DecorationOptions[] = []
-        const callRanges: vscode.DecorationOptions[] = []
-
-        // Expanded list of C++ keywords and common constructs that look like functions
-        const cppKeywords = new Set([
-            "if",
-            "for",
-            "while",
-            "switch",
-            "catch",
-            "sizeof",
-            "class",
-            "struct",
-            "new",
-            "delete",
-            "template",
-            "typename",
-            "using",
-            "namespace",
-            "return",
-        ])
-
-        // Regex for C++ function/method definitions with parameters
-        // This regex handles complex return types with namespaces, templates, and colons
-        // It matches function declarations that end with an opening brace
-        // Note: Uses negative lookahead to ensure we don't match namespace::function calls
-        // the regex itself: (?<return_type>^[^\s]+)\s+(?<function_name>[\w\:]+)\((?<parameters>.*?)\)
-        const funcDefRegex = /^\s*(?!#)(?<return_type>^[^\s]+)\s+(?<function_name>[\w\:]+)\((?<parameters>.*?)\)/gm
-        let match
-        // Modify the function definition regex processing
-        while ((match = funcDefRegex.exec(text)) !== null) {
-            const functionName = match[2]
-
-            if (cppKeywords.has(functionName)) {
-                continue
-            }
-
-            const params = match[3]
-            const paramTypes = params
-                .split(",")
-                .map(p => p.trim())
-                .filter(p => p.length > 0)
-
-            // Create hover message
-            const hoverMessage = new vscode.MarkdownString(
-                `**Function Definition**\n\`${functionName}(${paramTypes.join(", ")})\``
-            )
-
-            const startPos = editor.document.positionAt(match.index)
-            const endPos = editor.document.positionAt(match.index + match[0].length)
-
-            // Create decoration options object
-            definitionRanges.push({
-                range: new vscode.Range(startPos, endPos),
-                hoverMessage,
+        try {
+            // Request document symbols from the language server
+            const symbols = await client.sendRequest("textDocument/documentSymbol", {
+                textDocument: { uri: editor.document.uri.toString() },
             })
 
-            functionDefinitions.set(functionName, paramTypes)
-        }
+            outputChannel.clear()
+            outputChannel.appendLine("Function Definitions Found:")
+            outputChannel.appendLine("========================")
 
-        // Regex for simple C++ function calls with arguments
-        const funcCallRegex = /\b([\w:]+)\s*\(([^)]*)\);/g
-        // Modify the function call regex processing
-        while ((match = funcCallRegex.exec(text)) !== null) {
-            const functionName = match[1]
-            if (!cppKeywords.has(functionName) && functionDefinitions.has(functionName)) {
-                const args = match[2]
-                    .split(",")
-                    .map(a => a.trim())
-                    .filter(a => a.length > 0)
+            // Filter and display only function symbols
+            const functions = Array.isArray(symbols)
+                ? symbols.filter(
+                      (symbol: any) => symbol.kind === SymbolKind.Function || symbol.kind === SymbolKind.Method
+                  )
+                : []
 
-                // Create hover message
-                const hoverMessage = new vscode.MarkdownString(
-                    `**Function Call**\n\`${functionName}(${args.join(", ")})\``
-                )
-
-                const startPos = editor.document.positionAt(match.index)
-                const endPos = editor.document.positionAt(match.index + match[0].length)
-
-                // Create decoration options object
-                callRanges.push({
-                    range: new vscode.Range(startPos, endPos),
-                    hoverMessage,
+            if (functions.length === 0) {
+                outputChannel.appendLine("No functions found in this file.")
+            } else {
+                functions.forEach((func: any) => {
+                    // Log all properties of the symbol for debugging
+                    outputChannel.appendLine(`Function: ${func.name}`)
+                    outputChannel.appendLine(`Detail: ${func.detail || "none"}`)
+                    outputChannel.appendLine(`Type: ${func.type || "none"}`)
+                    outputChannel.appendLine(`Documentation: ${func.documentation || "none"}`)
+                    // If the symbol has children (which might contain parameter info)
+                    if (func.children) {
+                        outputChannel.appendLine("Parameters:")
+                        func.children.forEach((child: any) => {
+                            outputChannel.appendLine(
+                                `  - ${child.name}: ${child.detail || child.type || "unknown type"}`
+                            )
+                        })
+                    }
+                    outputChannel.appendLine("------------------------")
                 })
-
-                functionCalls.push(`${functionName}(${args.join(", ")})`)
             }
+
+            outputChannel.show()
+        } catch (error) {
+            console.error(error)
+            vscode.window.showErrorMessage("Error analyzing functions: " + error)
         }
-
-        // Apply decorations
-        editor.setDecorations(functionDefinitionDecoration, definitionRanges)
-        editor.setDecorations(functionCallDecoration, callRanges)
-
-        outputChannel.clear()
-        outputChannel.appendLine("--- C++ Code Analysis ---")
-        outputChannel.appendLine("")
-
-        outputChannel.appendLine("Function Definitions:")
-        if (functionDefinitions.size > 0) {
-            for (const [name, params] of functionDefinitions) {
-                outputChannel.appendLine(`- ${name}(${params.join(", ")})`)
-            }
-        } else {
-            outputChannel.appendLine("- None")
-        }
-
-        outputChannel.appendLine("")
-        outputChannel.appendLine("Function Calls to Defined Functions:")
-        if (functionCalls.length > 0) {
-            const uniqueCalls = [...new Set(functionCalls)]
-            uniqueCalls.forEach(call => {
-                outputChannel.appendLine(`- ${call}`)
-            })
-        } else {
-            outputChannel.appendLine("- None")
-        }
-
-        outputChannel.show()
     })
 
     context.subscriptions.push(disposable)
+
+    // Start the client
+    client.start()
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate(): Thenable<void> | undefined {
+    if (!client) {
+        return undefined
+    }
+    return client.stop()
+}
