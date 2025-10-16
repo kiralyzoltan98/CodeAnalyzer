@@ -1,7 +1,7 @@
 [
     {
         "directory": ".",
-        "command": "clang++ -std=c++20 -stdlib=libc++ -I. -I\"${workspaceFolder}\" -I\"C:/Program Files/LLVM/include\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.22000.0/ucrt\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.22000.0/um\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.22000.0/shared\"",
+        "command": "clang++ -std=c++20 -stdlib=libc++ -I. -IC:/Program Files/LLVM/include -IC:/Program Files/LLVM/lib/clang/21/include",
         "file": "*.cpp"
     }
 ]

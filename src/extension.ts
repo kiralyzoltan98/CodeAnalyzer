@@ -24,15 +24,14 @@ export function activate(context: vscode.ExtensionContext) {
             "--header-insertion=never",
             "--clang-tidy=0",
             "--completion-style=detailed",
-            "--function-arg-placeholders=0",
-            "--all-scopes-completion",
             "--background-index",
             "--log=verbose",
-            "--query-driver=**/*",
-            "--enable-config",
 
-            // Instead of using --folding-ranges, we'll use the compile commands file
-            // The compile_commands.json file will handle the compiler flags
+            // Use Clang/LLVM paths
+            "--compile-commands-dir=.",
+            "--enable-config",
+            "--resource-dir=C:/Program Files/LLVM/lib/clang/21",
+            "--query-driver=C:/Program Files/LLVM/bin/clang++.exe",
         ],
     }
 
